@@ -3,9 +3,9 @@ var AWS = require('aws-sdk');
 
 
 var config = {
-    user: 'sa',
-    password: 'yourStrong(!)Password',
-    server: 'localhost', // You can use 'localhost\\instance' to connect to named instance
+    user: '',
+    password: '',
+    server: '', // You can use 'localhost\\instance' to connect to named instance
     database: ''
 }
 
@@ -134,33 +134,40 @@ async function AtualizaBaseComArquivo(FSKeyID, bytes){
 
 async function handler(){
 
-  let quantidadeMensagens =  await buscaQuantidadeMensagensNaFila();
+  var quantidadeMensagens =  await buscaQuantidadeMensagensNaFila();
+  quantidadeMensagens = 23;
+  var quantidadeChamadasFila = quantidadeMensagens / 10;
+
   console.log("Quantidade de mensagens na fila: ", quantidadeMensagens);
 
   if(quantidadeMensagens){
-    let mensagens =  await buscaMensagensNaFila();
 
-    if(mensagens){
-      for (let index = 0; index < mensagens.length; index++) {
+    for (let chamada = 1; chamada <= quantidadeChamadasFila; chamada++) {
+      
+      var mensagens =  await buscaMensagensNaFila();
+
+      if(mensagens){
+        for (let index = 0; index < mensagens.length; index++) {
+    
+          var mensagem = JSON.parse(mensagens[index].Body);
+          var numeroProcesso = mensagem.chargeBackId.split("-")[0];
+      
+          var arquivo =  await buscaArquivoS3(mensagem.keyArquivo);
+          var FSKeyID =  await InsertTiff(mensagem.dataInclusao, numeroProcesso);
+      
+          if(FSKeyID){
   
-        var mensagem = JSON.parse(mensagens[index].Body);
-        var numeroProcesso = mensagem.chargeBackId.split("-")[0];
+            var atualizada =  await AtualizaBaseComArquivo(FSKeyID, arquivo.Body);
+  
+            if(atualizada){
+              await RemoveMensagemDaFila(mensagens[index].ReceiptHandle);
+            }              
+          }
     
-        var arquivo =  await buscaArquivoS3(mensagem.keyArquivo);
-        var FSKeyID =  await InsertTiff(mensagem.dataInclusao, numeroProcesso);
-    
-        if(FSKeyID){
-
-          var atualizada =  await AtualizaBaseComArquivo(FSKeyID, arquivo.Body);
-
-          if(atualizada){
-            await RemoveMensagemDaFila(mensagens[index].ReceiptHandle);
-          }    
-          
         }
-  
-      }
+      }      
     }
+
   }
   else{
     console.log("Sem itens na fila para serem processados.");
@@ -169,12 +176,3 @@ async function handler(){
 }
 
 handler().then(v=> console.log("Fim de processamento."));
-
-
-//  Exemplo de Json da fila
-exemplo_objeto_fila = {
-     "nomeArquivo": "2001098989999-1-1-1.pdf",
-     "keyArquivo": "Documento/Estbelecimento/2001098989999-1-1-1.pdf",
-     "chargeBackId": "2001098989999-1-1-1",
-     "dataInclusao": "20201202103155999"       
- }
