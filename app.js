@@ -135,7 +135,6 @@ async function AtualizaBaseComArquivo(FSKeyID, bytes){
 async function handler(){
 
   var quantidadeMensagens =  await buscaQuantidadeMensagensNaFila();
-  quantidadeMensagens = 23;
   var quantidadeChamadasFila = quantidadeMensagens / 10;
 
   console.log("Quantidade de mensagens na fila: ", quantidadeMensagens);
