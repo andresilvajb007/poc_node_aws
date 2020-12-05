@@ -17,95 +17,159 @@ AWS.config.update({region: 'us-east-1'});
 // Create an SQS service object
 var sqs = new AWS.SQS({apiVersion: '2012-11-05'});
 
-var params = {
-    AttributeNames: [
-        "SentTimestamp"
-    ],
-    MaxNumberOfMessages: 1,
-    MessageAttributeNames: [
-        "All"
-    ],
-    QueueUrl: sqsURL,
-    VisibilityTimeout: 20,
-    WaitTimeSeconds: 0
+async function buscaQuantidadeMensagensNaFila(){
+  try {
+    var queParams = {
+      QueueUrl: sqsURL,
+      AttributeNames : ['ApproximateNumberOfMessages'],
+     };
+     
+     let fo =  await sqs.getQueueAttributes(queParams).promise();
+
+     return Number(fo.Attributes.ApproximateNumberOfMessages);
+      
+  } catch (error) {
+    console.log(error);
+  }
 };
 
-sqs.receiveMessage(params, function(err, data_sqs) {
-  if (err) {
-    console.log("Receive Error", err);
-  } else if (data_sqs.Messages) {
+async function buscaMensagensNaFila(){
+  try {
 
-    for (let index = 0; index < data_sqs.Messages.length; index++) {
+    var params = {
+      AttributeNames: [
+          "All"
+      ],
+      MaxNumberOfMessages: 1,
+      MessageAttributeNames: [
+          "All"
+      ],
+      QueueUrl: sqsURL,
+      VisibilityTimeout: 20,
+      WaitTimeSeconds: 20
+    };
+     
+     let reponse =  await sqs.receiveMessage(params).promise();
 
-        const element = JSON.parse(data_sqs.Messages[index].Body);
-        var key = element.keyArquivo
-        var dataIn = element.dataInclusao
-
-        new AWS.S3().getObject({ Bucket: bucket, Key: key }, function(err, data_s3)
-        {
-            if (!err)                
-                console.log(data_s3.Body.toString());
-                InsertProc(data_s3.Body, data_sqs.Messages[index].ReceiptHandle);
-        });        
-        
-    }
+     return reponse.Messages;
+      
+  } catch (error) {
+    console.log(error);
   }
+};
 
-});
+async function RemoveMensagemDaFila(ReceiptHandle){
 
- function  InsertProc(arquivo, ReceiptHandle){
-    
-    var fsKeyID = 0;
+  try {
 
-    sql.connect(config, function (err) {
-        if (err) console.log(err);
-    
-        var request = new sql.Request();
-        request.input('RxDate', sql.VarChar(14), '1234');
-        request.input('PoolID', sql.Int(), 72);
-        request.input('uProcesso', sql.VarChar(20), '2020');
-        request.output('FSKeyID',sql.Int)
-    
-        request.execute('spInsertTiff').then(function(result) {
-    
-          console.log(result);
-          fsKeyID = result.output.FSKeyID; 
-
-          request = new sql.Request();
-          request.input('RXFile', sql.VarBinary(sql.MAX), arquivo);
-
-          let query  ='update FileStore..RXFiles set RXFile = @RXFile where  KeyID =' + fsKeyID;
-          request.query(query, (err, result) => {
-
-            console.log(result)
-            DeleteMessage(ReceiptHandle);  
-
-            });          
-
-    
-        }).catch(function(err) {
-          console.log(err);
-        });
-    });
-
-}
-
-
-function DeleteMessage(ReceiptHandle){
     var deleteParams = {
       QueueUrl: sqsURL,
       ReceiptHandle: ReceiptHandle
     };
 
+    let response =  await sqs.deleteMessage(deleteParams).promise();
 
-    sqs.deleteMessage(deleteParams, function(err, data) {
-      if (err) {
-        console.log("Delete Error", err);
-      } else {
-        console.log("Message Deleted", data);
-      }
-    });
+    return response;
+
+  } catch (error) {
+    console.log(error);
+  }   
 }
+
+async function buscaArquivoS3(key){
+
+  try {
+     let s3 = new AWS.S3();
+     let reponse =  await s3.getObject({ Bucket: bucket, Key: key }).promise();
+
+     return reponse;
+      
+  } catch (error) {
+    console.log(error);
+  }
+};
+
+async function InsertTiff(RxDate, uProcesso){
+  
+  try{
+  
+    await sql.connect(config);
+    
+    var request = new sql.Request();
+    request.input('RxDate', sql.VarChar(14), RxDate);
+    request.input('PoolID', sql.Int(), 72);
+    request.input('uProcesso', sql.VarChar(20), uProcesso);
+    request.output('FSKeyID',sql.Int);
+
+    var result = await request.execute('spInsertTiff');
+
+    return result.output.FSKeyID;
+  
+  }
+  catch(error){
+    console.log(error);
+  }
+};
+
+async function AtualizaBaseComArquivo(FSKeyID, bytes){
+  
+  try{
+
+      await sql.connect(config);
+    
+      var request = new sql.Request();
+      request.input('RXFile', sql.VarBinary(sql.MAX), bytes);
+    
+      let query  ='update FileStore..RXFiles set RXFile = @RXFile where  KeyID =' + FSKeyID;
+      var response = await request.query(query);
+    
+      return true;
+  }
+  catch(error){
+    console.log(error);
+
+    return false;
+  }
+};
+
+async function handler(){
+
+  let quantidadeMensagens =  await buscaQuantidadeMensagensNaFila();
+  console.log("Quantidade de mensagens na fila: ", quantidadeMensagens);
+
+  if(quantidadeMensagens){
+    let mensagens =  await buscaMensagensNaFila();
+
+    if(mensagens){
+      for (let index = 0; index < mensagens.length; index++) {
+  
+        var mensagem = JSON.parse(mensagens[index].Body);
+        var numeroProcesso = mensagem.chargeBackId.split("-")[0];
+    
+        var arquivo =  await buscaArquivoS3(mensagem.keyArquivo);
+        var FSKeyID =  await InsertTiff(mensagem.dataInclusao, numeroProcesso);
+    
+        if(FSKeyID){
+
+          var atualizada =  await AtualizaBaseComArquivo(FSKeyID, arquivo.Body);
+
+          if(atualizada){
+            await RemoveMensagemDaFila(mensagens[index].ReceiptHandle);
+          }    
+          
+        }
+  
+      }
+    }
+  }
+  else{
+    console.log("Sem itens na fila para serem processados.");
+  }
+
+}
+
+handler().then(v=> console.log("Fim de processamento."));
+
 
 //  Exemplo de Json da fila
 exemplo_objeto_fila = {
