@@ -1,16 +1,13 @@
 var sql = require('mssql');
-var AWS = require('aws-sdk');
+var AWS = require('aws-sdk'),
+    region = "us-east-1",
+    secretName = "sql-secret",
+    secret,
+    decodedBinarySecret;
 
-
-var config = {
-    user: '',
-    password: '',
-    server: '', // You can use 'localhost\\instance' to connect to named instance
-    database: ''
-}
 
 var bucket = ''
-var sqsURL = ''
+var sqsURL = '' 
 
 AWS.config.update({region: 'us-east-1'});
 
@@ -40,12 +37,12 @@ async function buscaMensagensNaFila(){
       AttributeNames: [
           "All"
       ],
-      MaxNumberOfMessages: 1,
+      MaxNumberOfMessages: 2,
       MessageAttributeNames: [
           "All"
       ],
       QueueUrl: sqsURL,
-      VisibilityTimeout: 20,
+      VisibilityTimeout: 30,
       WaitTimeSeconds: 20
     };
      
@@ -89,17 +86,17 @@ async function buscaArquivoS3(key){
   }
 };
 
-async function InsertTiff(RxDate, uProcesso){
+async function InsertTiff(RxDate, uProcesso, config){
   
   try{
   
     await sql.connect(config);
     
     var request = new sql.Request();
-    request.input('RxDate', sql.VarChar(14), RxDate);
-    request.input('PoolID', sql.Int(), 72);
-    request.input('uProcesso', sql.VarChar(20), uProcesso);
-    request.output('FSKeyID',sql.Int);
+    request.input('xxx', sql.VarChar(14), RxDate);
+    request.input('xxx', sql.Int(), 72);
+    request.input('xxx', sql.VarChar(20), uProcesso);
+    request.output('xxx',sql.Int);
 
     var result = await request.execute('spInsertTiff');
 
@@ -111,7 +108,7 @@ async function InsertTiff(RxDate, uProcesso){
   }
 };
 
-async function AtualizaBaseComArquivo(FSKeyID, bytes){
+async function AtualizaBaseComArquivo(FSKeyID, bytes, config){
   
   try{
 
@@ -120,7 +117,7 @@ async function AtualizaBaseComArquivo(FSKeyID, bytes){
       var request = new sql.Request();
       request.input('RXFile', sql.VarBinary(sql.MAX), bytes);
     
-      let query  ='update FileStore..RXFiles set RXFile = @RXFile where  KeyID =' + FSKeyID;
+      let query  ='update database..table set xxx = @xxx where  xxx =' + xxx;
       var response = await request.query(query);
     
       return true;
@@ -132,9 +129,42 @@ async function AtualizaBaseComArquivo(FSKeyID, bytes){
   }
 };
 
+async function GetDbConfig(){
+  
+  try{
+
+    var client = new AWS.SecretsManager({
+      region: region
+    });
+  
+    const params = {SecretId: secretName};
+    const rc = await client.getSecretValue(params).promise();
+    let secret_json = JSON.parse(rc.SecretString);
+  
+  
+    var dbConfig = {
+      user: secret_json.username,
+      password: secret_json.password,
+      server: secret_json.host, // You can use 'localhost\\instance' to connect to named instance
+      database: 'XXX'
+    };
+
+    return dbConfig;
+
+  }
+  catch(error){
+    console.log(error);
+    throw error;
+  }
+};
+
 async function handler(){
 
+
+  var dbConfig = await GetDbConfig();  
+  
   var quantidadeMensagens =  await buscaQuantidadeMensagensNaFila();
+  quantidadeMensagens = 23;
   var quantidadeChamadasFila = quantidadeMensagens / 10;
 
   console.log("Quantidade de mensagens na fila: ", quantidadeMensagens);
@@ -152,11 +182,11 @@ async function handler(){
           var numeroProcesso = mensagem.chargeBackId.split("-")[0];
       
           var arquivo =  await buscaArquivoS3(mensagem.keyArquivo);
-          var FSKeyID =  await InsertTiff(mensagem.dataInclusao, numeroProcesso);
+          var id =  await InsertTiff(mensagem.dataInclusao, numeroProcesso,dbConfig);
       
-          if(FSKeyID){
+          if(id){
   
-            var atualizada =  await AtualizaBaseComArquivo(FSKeyID, arquivo.Body);
+            var atualizada =  await AtualizaBaseComArquivo(id, arquivo.Body,dbConfig);
   
             if(atualizada){
               await RemoveMensagemDaFila(mensagens[index].ReceiptHandle);
@@ -175,3 +205,5 @@ async function handler(){
 }
 
 handler().then(v=> console.log("Fim de processamento."));
+
+
